@@ -1,20 +1,30 @@
-FROM node:22 as js-build
-WORKDIR /gotty
-COPY js /gotty/js
-COPY Makefile /gotty/
-RUN make bindata/static/js/gotty.js.map
+# Frontend build stage
+FROM oven/bun:1 as js-build
+WORKDIR /app
+COPY js/package.json js/bun.lock ./js/
+RUN cd js && bun install --frozen-lockfile
+COPY js ./js
+RUN cd js && bunx webpack --mode=production
 
-FROM golang:1.23 as go-build
-WORKDIR /gotty
-COPY . /gotty
-COPY --from=js-build /gotty/js/node_modules /gotty/js/node_modules
-COPY --from=js-build /gotty/bindata/static/js /gotty/bindata/static/js
-RUN CGO_ENABLED=0 make
+# Go build stage
+FROM golang:1.24-alpine as go-build
+RUN apk add --no-cache make git
+WORKDIR /build
+COPY . .
+# Copy frontend assets to where Go expects them
+RUN mkdir -p bindata/static/js bindata/static/css
+COPY --from=js-build /app/bindata/static/js/gotty.js bindata/static/js/
+COPY --from=js-build /app/bindata/static/js/gotty.js.map bindata/static/js/
+# Copy other assets using Makefile logic or manually, leveraging the Makefile for consistency
+# We need resources/ to be available
+RUN make copy-assets
+# Build the binary
+RUN make build
 
+# Final image
 FROM alpine:latest
-RUN apk update && \
-    apk upgrade && \
-    apk --no-cache add ca-certificates bash
+RUN apk add --no-cache ca-certificates bash
 WORKDIR /root
-COPY --from=go-build /gotty/gotty /usr/bin/
-CMD ["gotty",  "-w", "bash"]
+COPY --from=go-build /build/gotty /usr/bin/
+ENTRYPOINT ["/usr/bin/gotty"]
+CMD ["-w", "bash"]

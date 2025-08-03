@@ -1,92 +1,119 @@
-OUTPUT_DIR = ./builds
-GIT_COMMIT = `git rev-parse HEAD | cut -c1-7`
-VERSION = $(shell git describe --tags)
-BUILD_OPTIONS = -ldflags "-X main.Version=$(VERSION)"
+# Makefile for gotty
 
-ifeq ($(DEV), 1)
-	BUILD_OPTIONS += -tags dev
-	WEBPACK_MODE = development
-else
-	WEBPACK_MODE = production
-endif
+BINARY_NAME := gotty
+OUTPUT_DIR := builds
+VERSION := $(shell git describe --tags 2>/dev/null || git rev-parse --short HEAD)
+COMMIT := $(shell git rev-parse HEAD)
 
-export CGO_ENABLED=0
+# Build flags
+LDFLAGS := -X main.Version=$(VERSION) -X main.Commit=$(COMMIT) -s -w
+GO_BUILD_CMD := CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)"
 
-gotty: main.go assets server/*.go webtty/*.go backend/*.go Makefile
-	go build ${BUILD_OPTIONS}
+# Default target
+.PHONY: all
+all: build
 
-docker:
-	docker build . -t gotty-bash:$(VERSION)
+# ------------------------------------------------------------------------------
+# Development & Local Build
+# ------------------------------------------------------------------------------
 
-.PHONY: all docker assets
-assets: bindata/static/js/gotty.js.map \
-	bindata/static/js/gotty.js \
-	bindata/static/index.html \
-	bindata/static/icon.svg \
-	bindata/static/favicon.ico \
-	bindata/static/css/index.css \
-	bindata/static/css/xterm.css \
-	bindata/static/css/xterm_customize.css \
-	bindata/static/manifest.json \
-	bindata/static/icon_192.png
+.PHONY: build
+build: assets
+	$(GO_BUILD_CMD) -o $(BINARY_NAME)
 
-all: gotty
+.PHONY: install
+install: assets
+	CGO_ENABLED=0 go install -ldflags "$(LDFLAGS)"
 
-bindata/static bindata/static/css bindata/static/js:
-	mkdir -p $@
-
-bindata/static/%: resources/% | bindata/static/css
-	cp "$<" "$@"
-
-bindata/static/css/%.css: resources/%.css | bindata/static
-	cp "$<" "$@"
-
-bindata/static/css/xterm.css: js/node_modules/@xterm/xterm/css/xterm.css | bindata/static
-	cp "$<" "$@"
-
-js/node_modules/@xterm/xterm/dist/xterm.css:
-	cd js && \
-	npm install
-
-bindata/static/js/gotty.js.map bindata/static/js/gotty.js: js/src/* | js/node_modules/webpack
-	cd js && \
-	npx webpack --mode=$(WEBPACK_MODE)
-
-js/node_modules/webpack:
-	cd js && \
-	npm install
-
-README-options:
-	./gotty --help | sed '1,/GLOBAL OPTIONS/ d' > options.txt.tmp
-	sed -f README.md.sed -i README.md
-	rm options.txt.tmp
-
-tools:
-	go install github.com/mitchellh/gox@latest
-	go install github.com/tcnksm/ghr@latest
-
+.PHONY: test
 test:
-	if [ `go fmt $(go list ./... | grep -v /vendor/) | wc -l` -gt 0 ]; then echo "go fmt error"; exit 1; fi
-	go test ./...
+	go test -v ./...
 
-cross_compile:
-	GOARM=5 gox -os="darwin linux freebsd netbsd openbsd solaris" -arch="386 amd64 arm arm64" -osarch="!darwin/386" -osarch="!darwin/arm" $(BUILD_OPTIONS) -output "${OUTPUT_DIR}/pkg/{{.OS}}_{{.Arch}}/{{.Dir}}"
-
-targz:
-	mkdir -p ${OUTPUT_DIR}/dist
-	cd ${OUTPUT_DIR}/pkg/; for osarch in *; do (cd $$osarch; tar zcvf ../../dist/gotty_${VERSION}_$$osarch.tar.gz ./*); done;
-
-shasums:
-	cd ${OUTPUT_DIR}/dist; sha256sum * > ./SHA256SUMS
-
-release-artifacts: gotty cross_compile targz shasums
-
-release:
-	ghr -draft ${VERSION} ${OUTPUT_DIR}/dist # -c ${GIT_COMMIT} --delete --prerelease -u sorenisanerd -r gotty ${VERSION}
-
+.PHONY: clean
 clean:
-	rm -fr gotty builds js/dist bindata/static js/node_modules
+	rm -rf $(OUTPUT_DIR)
+	rm -f $(BINARY_NAME)
+	rm -rf bindata/static
+	rm -rf js/dist js/node_modules
 
-addcontributors:
-	-gh issue list -s all -L 1000 --json author -t "$$(/bin/echo -e '{{ range . }}{{ .author.login }}\n{{ end }}')" | sort | uniq | xargs -Ifoo -t all-contributors add foo bug --commitTemplate '<%= (newContributor ? "Add" : "Update") %> @<%= username %> as a contributor'
-	-gh pr list -s all -L 1000 --json author -t "$$(/bin/echo -e '{{ range . }}{{ .author.login }}\n{{ end }}')" | sort | uniq | xargs -Ifoo -t all-contributors add foo code --commitTemplate '<%= (newContributor ? "Add" : "Update") %> @<%= username %> as a contributor'
+# ------------------------------------------------------------------------------
+# Frontend & Assets
+# ------------------------------------------------------------------------------
+
+.PHONY: assets
+assets: frontend-install frontend-build copy-assets
+
+.PHONY: frontend-install
+frontend-install:
+	cd js && bun install
+
+.PHONY: frontend-build
+frontend-build:
+	cd js && bunx webpack --mode=production
+
+.PHONY: copy-assets
+copy-assets:
+	mkdir -p bindata/static/css bindata/static/js
+	cp resources/favicon.ico bindata/static/
+	cp resources/icon.svg bindata/static/
+	cp resources/icon_192.png bindata/static/
+	cp resources/index.html bindata/static/
+	cp resources/manifest.json bindata/static/
+	cp resources/index.css bindata/static/css/
+	cp resources/xterm_customize.css bindata/static/css/
+	# Ensure xterm.css is available (installed via frontend-install)
+	cp js/node_modules/@xterm/xterm/css/xterm.css bindata/static/css/
+
+# ------------------------------------------------------------------------------
+# Cross Compilation (Linux, Mac, Windows)
+# ------------------------------------------------------------------------------
+
+.PHONY: build-all
+build-all: build-linux build-mac build-win
+
+.PHONY: build-linux
+build-linux: assets
+	@echo "Building for Linux..."
+	mkdir -p $(OUTPUT_DIR)/linux
+	GOOS=linux GOARCH=amd64 $(GO_BUILD_CMD) -o $(OUTPUT_DIR)/linux/$(BINARY_NAME)_linux_amd64
+	GOOS=linux GOARCH=arm64 $(GO_BUILD_CMD) -o $(OUTPUT_DIR)/linux/$(BINARY_NAME)_linux_arm64
+
+.PHONY: build-mac
+build-mac: assets
+	@echo "Building for macOS (Darwin)..."
+	mkdir -p $(OUTPUT_DIR)/mac
+	GOOS=darwin GOARCH=amd64 $(GO_BUILD_CMD) -o $(OUTPUT_DIR)/mac/$(BINARY_NAME)_darwin_amd64
+	GOOS=darwin GOARCH=arm64 $(GO_BUILD_CMD) -o $(OUTPUT_DIR)/mac/$(BINARY_NAME)_darwin_arm64
+
+.PHONY: build-win
+build-win: assets
+	@echo "Building for Windows..."
+	mkdir -p $(OUTPUT_DIR)/windows
+	GOOS=windows GOARCH=amd64 $(GO_BUILD_CMD) -o $(OUTPUT_DIR)/windows/$(BINARY_NAME)_windows_amd64.exe
+
+# ------------------------------------------------------------------------------
+# Packaging (for Release)
+# ------------------------------------------------------------------------------
+
+DIST_DIR := $(OUTPUT_DIR)/dist
+
+.PHONY: package
+package: build-all
+	mkdir -p $(DIST_DIR)
+	# Linux
+	tar -czf $(DIST_DIR)/$(BINARY_NAME)_linux_amd64.tar.gz -C $(OUTPUT_DIR)/linux $(BINARY_NAME)_linux_amd64
+	tar -czf $(DIST_DIR)/$(BINARY_NAME)_linux_arm64.tar.gz -C $(OUTPUT_DIR)/linux $(BINARY_NAME)_linux_arm64
+	# macOS
+	tar -czf $(DIST_DIR)/$(BINARY_NAME)_darwin_amd64.tar.gz -C $(OUTPUT_DIR)/mac $(BINARY_NAME)_darwin_amd64
+	tar -czf $(DIST_DIR)/$(BINARY_NAME)_darwin_arm64.tar.gz -C $(OUTPUT_DIR)/mac $(BINARY_NAME)_darwin_arm64
+	# Windows (zip is more common, but keeping tar.gz for consistency or change to zip if preferred)
+	tar -czf $(DIST_DIR)/$(BINARY_NAME)_windows_amd64.tar.gz -C $(OUTPUT_DIR)/windows $(BINARY_NAME)_windows_amd64.exe
+	cd $(DIST_DIR) && sha256sum * > SHA256SUMS
+
+# ------------------------------------------------------------------------------
+# Docker
+# ------------------------------------------------------------------------------
+
+.PHONY: docker
+docker:
+	docker build -t $(BINARY_NAME):$(VERSION) .

@@ -5,13 +5,12 @@ on:
   pull_request:
     branches: [ master ]
 
-
 jobs:
   quick-build-test:
     runs-on: "ubuntu-latest"
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
@@ -20,10 +19,15 @@ jobs:
       with:
         go-version-file: go.mod
 
-    - name: "Build"
-      run: "touch bindata/* bindata/*/* ; make"
+    - name: Set up Bun
+      uses: oven-sh/setup-bun@v1
+      with:
+        bun-version: latest
 
-    - name: Upload linux/amd64 artifact
+    - name: "Build"
+      run: "make build"
+
+    - name: Upload artifact
       if: ${{ !env.ACT }}
       uses: actions/upload-artifact@v4
       with:
