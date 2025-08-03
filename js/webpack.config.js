@@ -15,7 +15,7 @@ module.exports = {
         "gotty": "./src/main.ts",
     },
     output: {
-        path: path.resolve(__dirname, '../bindata/static/js/'),
+        path: path.resolve(__dirname, 'dist'),
     },
     devtool: devtool,
     resolve: {

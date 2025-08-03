@@ -2,8 +2,8 @@
 
 BINARY_NAME := gotty
 OUTPUT_DIR := builds
-VERSION := $(shell git describe --tags 2>/dev/null || git rev-parse --short HEAD)
-COMMIT := $(shell git rev-parse HEAD)
+VERSION := $(shell git describe --tags 2>/dev/null || git rev-parse --short HEAD 2>/dev/null || echo "0.0.0")
+COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
 
 # Build flags
 LDFLAGS := -X main.Version=$(VERSION) -X main.Commit=$(COMMIT) -s -w
@@ -19,6 +19,10 @@ all: build
 
 .PHONY: build
 build: assets
+	$(GO_BUILD_CMD) -o $(BINARY_NAME)
+
+.PHONY: build-binary
+build-binary:
 	$(GO_BUILD_CMD) -o $(BINARY_NAME)
 
 .PHONY: install
@@ -54,6 +58,8 @@ frontend-build:
 .PHONY: copy-assets
 copy-assets:
 	mkdir -p bindata/static/css bindata/static/js
+	cp js/dist/gotty.js bindata/static/js/
+	cp js/dist/gotty.js.map bindata/static/js/
 	cp resources/favicon.ico bindata/static/
 	cp resources/icon.svg bindata/static/
 	cp resources/icon_192.png bindata/static/
