@@ -8,7 +8,7 @@ import (
 )
 
 func TestNewFactory(t *testing.T) {
-	factory, err := NewFactory("/bin/false", []string{}, &Options{CloseSignal: 123, CloseTimeout: 321})
+	factory, err := NewFactory("/bin/false", []string{}, &Options{CloseTimeout: 321})
 	if err != nil {
 		t.Errorf("NewFactory() returned error")
 		return
@@ -19,15 +19,12 @@ func TestNewFactory(t *testing.T) {
 	if !reflect.DeepEqual(factory.argv, []string{}) {
 		t.Errorf("factory.argv = %v, expected %v", factory.argv, []string{})
 	}
-	if !reflect.DeepEqual(factory.options, &Options{CloseSignal: 123, CloseTimeout: 321}) {
+	if !reflect.DeepEqual(factory.options, &Options{CloseTimeout: 321}) {
 		t.Errorf("factory.options = %v, expected %v", factory.options, &Options{})
 	}
 
 	slave, _ := factory.New(nil, nil)
 	lcmd := slave.(*LocalCommand)
-	if lcmd.closeSignal != 123 {
-		t.Errorf("lcmd.closeSignal = %v, expected %v", lcmd.closeSignal, 123)
-	}
 	if lcmd.closeTimeout != time.Second*321 {
 		t.Errorf("lcmd.closeTimeout = %v, expected %v", lcmd.closeTimeout, time.Second*321)
 	}
@@ -57,10 +54,6 @@ func TestFactoryNew(t *testing.T) {
 		return
 	}
 
-	// Local echo is on, so we get the output twice:
-	// Once because we're "typing" it, and once more
-	// repeated back to us by `cat`. Also, \r\n
-	// because we're a terminal.
 	expectedBuf := []byte("foobar\r\nfoobar\r\n")
 	readBuf := make([]byte, 1024)
 	var totalRead int
